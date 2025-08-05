@@ -2,11 +2,17 @@ package com.example.inlocal
 
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import org.yaml.snakeyaml.DumperOptions
 import org.yaml.snakeyaml.Yaml
 import java.io.File
 import java.util.Properties
 
 class InLocalService(private val project: Project) {
+
+    private val options = DumperOptions().apply {
+        defaultFlowStyle = DumperOptions.FlowStyle.BLOCK
+        isPrettyFlow = true
+    }
 
     fun applyEnv(env: String, disableKafka: Boolean, disableRedis: Boolean, replaceUrls: Boolean) {
         val basePath = project.basePath ?: return
@@ -42,7 +48,7 @@ class InLocalService(private val project: Project) {
         val envFile = File("$basePath/src/main/resources/.env")
 
         if (isYaml) {
-            val yaml = Yaml()
+            val yaml = Yaml(options)
 
             val main = yaml.load<MutableMap<String, Any>>(appFile.readText())
             val profileMap = (main["spring"] as? MutableMap<String, Any>) ?: mutableMapOf()
