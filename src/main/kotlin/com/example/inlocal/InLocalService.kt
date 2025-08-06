@@ -90,7 +90,7 @@ class InLocalService(private val project: Project) {
 
             val parsedEnv = InLocalParser().parse(envFile.readText())["${env.uppercase()}"]
             parsedEnv?.forEach { (key, value) ->
-                targetProps.replaceAll { k, v ->
+                targetProps.replaceAll { _, v ->
                     if (v is String && v.contains("\${$key}")) v.replace("\${$key}", value) else v
                 }
             }
