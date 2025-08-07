@@ -50,31 +50,67 @@ class InLocalService(private val project: Project) {
         if (isYaml) {
             val yaml = Yaml(options)
 
-            val main = yaml.load<MutableMap<String, Any>>(appFile.readText())
-            val profileMap = (main["spring"] as? MutableMap<String, Any>) ?: mutableMapOf()
-            profileMap["profiles"] = mapOf("active" to env)
-            main["spring"] = profileMap
-            appFile.bufferedWriter().use { it.write(yaml.dump(main)) }
+            val documents = yaml.loadAll(appFile.readText()).toList().map {
+                @Suppress("UNCHECKED_CAST")
+                it as MutableMap<String, Any>
+            }.toMutableList()
 
-            val envMap = yaml.load<MutableMap<String, Any>>(targetFile.readText())
-
-            if (disableKafka) updateMapPath(envMap, "kafka.listener.enabled", false)
-            if (disableRedis) updateMapPath(envMap, "redis.consumer.enabled", false)
-
-
-            val parsedEnv = InLocalParser().parse(envFile.readText())["${env.uppercase()}"]
-            parsedEnv?.forEach { (key, value) ->
-                replaceEnvPlaceholders(envMap, key, value)
-            }
-
-            if (replaceUrls) {
-                val urlMappings = InLocalParser().parse(envFile.readText())["URLS_${env.uppercase()}"]
-                if (urlMappings != null) {
-                    replaceUrlValues(envMap, urlMappings)
+            for (doc in documents) {
+                val spring = doc["spring"] as? MutableMap<String, Any>
+                if (spring != null) {
+                    spring["profiles"] = mapOf("active" to env)
+                    break
                 }
             }
 
-            targetFile.bufferedWriter().use { it.write(yaml.dump(envMap)) }
+            appFile.bufferedWriter().use { writer ->
+                documents.forEach { writer.write(yaml.dump(it)); writer.write("---\n") }
+            }
+
+            val targetDocuments = yaml.loadAll(targetFile.readText()).toList().map {
+                @Suppress("UNCHECKED_CAST")
+                it as MutableMap<String, Any>
+            }.toMutableList()
+
+            var kafkaModified = false
+            var redisModified = false
+
+            for (targetDoc in targetDocuments) {
+                if (disableKafka && hasNestedKey(targetDoc, listOf("kafka", "listener", "enabled"))) {
+                    updateMapPath(targetDoc, "kafka.listener.enabled", false)
+                    kafkaModified = true
+                }
+
+                if (disableRedis && hasNestedKey(targetDoc, listOf("redis", "consumer", "enabled"))) {
+                    updateMapPath(targetDoc, "redis.consumer.enabled", false)
+                    redisModified = true
+                }
+
+                val parsedEnv = InLocalParser().parse(envFile.readText())["${env.uppercase()}"]
+                parsedEnv?.forEach { (key, value) ->
+                    replaceEnvPlaceholders(targetDoc, key, value)
+                }
+
+                if (replaceUrls) {
+                    val urlMappings = InLocalParser().parse(envFile.readText())["URLS_${env.uppercase()}"]
+                    if (urlMappings != null) {
+                        replaceUrlValues(targetDoc, urlMappings)
+                    }
+                }
+            }
+
+            // If the key wasn't found in any doc, apply once to the first doc
+            if (disableKafka && !kafkaModified && targetDocuments.isNotEmpty()) {
+                updateMapPath(targetDocuments.first(), "kafka.listener.enabled", false)
+            }
+
+            if (disableRedis && !redisModified && targetDocuments.isNotEmpty()) {
+                updateMapPath(targetDocuments.first(), "redis.consumer.enabled", false)
+            }
+
+            targetFile.bufferedWriter().use { writer ->
+                targetDocuments.forEach { writer.write(yaml.dump(it)); writer.write("---\n") }
+            }
         } else {
             val props = Properties()
             props.load(appFile.reader())
@@ -196,5 +232,17 @@ class InLocalService(private val project: Project) {
                 }
             }
         }
+    }
+
+    private fun hasNestedKey(map: Map<String, Any>, keys: List<String>): Boolean {
+        var current: Any? = map
+        for (key in keys) {
+            if (current is Map<*, *>) {
+                current = current[key]
+            } else {
+                return false
+            }
+        }
+        return true
     }
 }
